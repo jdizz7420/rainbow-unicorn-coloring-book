@@ -948,8 +948,6 @@
   var activePointers = new Map();
   var pinchState = null;
   var tapState = null;
-  var lastTapTime = 0;
-  var suppressNextClick = false;
 
   canvas.addEventListener("pointerdown", function(e){
     try { canvas.setPointerCapture(e.pointerId); } catch(err){ /* ignore -- gesture tracking below doesn't depend on capture */ }
@@ -1010,16 +1008,6 @@
     activePointers.delete(e.pointerId);
     if (activePointers.size < 2) pinchState = null;
     if (tapState && e.pointerId === tapState.pointerId){
-      if (!tapState.moved){
-        var now = Date.now();
-        if (viewScale > 1 && now - lastTapTime < 350){
-          resetView();
-          suppressNextClick = true;
-          lastTapTime = 0;
-        } else {
-          lastTapTime = now;
-        }
-      }
       tapState = null;
     }
   }
@@ -1040,7 +1028,6 @@
   }, { passive:false });
 
   canvas.addEventListener("click", function(e){
-    if (suppressNextClick){ suppressNextClick = false; return; }
     var regionId = regionAtPoint(e.clientX, e.clientY);
     if (regionId < 0) return;
     closeCustomPopover();
