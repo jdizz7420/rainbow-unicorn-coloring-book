@@ -37,6 +37,8 @@
     cursor:pointer;
   }
   #topbar .iconBtn:active{ transform:translateY(2px); box-shadow:0 1px 0 rgba(0,0,0,.12); }
+  #topbar .iconBtn:disabled{ opacity:.35; }
+  #topbar .iconBtn:disabled:active{ transform:none; box-shadow:0 3px 0 rgba(0,0,0,.12); }
   #sceneTitle{
     flex:1; text-align:center; font-size:clamp(16px,3vw,24px); font-weight:bold;
     text-shadow:0 2px 0 #fff;
@@ -77,6 +79,46 @@
   }
   .swatch.selected{ border-color:var(--ink); transform:scale(1.12); }
   .swatch[data-hex="#ffffff"]{ border-color:#c9c4d6; }
+  .swatch.customSwatch{
+    background:conic-gradient(from 0deg, #ff5a5a, #ff9d4d, #ffd23f, #7ed957, #2dd4bf, #4d9de0, #a78bfa, #ff8fc7, #ff5a5a);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .customDot{
+    width:62%; height:62%; border-radius:50%; background:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:20px; line-height:1;
+    box-shadow:inset 0 0 0 2px rgba(0,0,0,.12);
+  }
+
+  /* ---------- custom color popover ---------- */
+  #customPopover{
+    position:fixed; z-index:15; background:var(--card); border-radius:20px;
+    box-shadow:0 8px 0 rgba(0,0,0,.15); padding:16px; width:200px;
+    transform:scale(.2); opacity:0; pointer-events:none; transform-origin:50% 100%;
+    transition:transform .18s ease, opacity .18s ease;
+  }
+  #customPopover.open{ transform:scale(1); opacity:1; pointer-events:auto; }
+  #customPopover:after{
+    content:""; position:absolute; bottom:-9px; left:var(--arrowX,50%); margin-left:-9px;
+    width:0; height:0; border-left:9px solid transparent; border-right:9px solid transparent;
+    border-top:9px solid var(--card);
+  }
+  #svWrap{ position:relative; }
+  #svCanvas{ width:100%; height:120px; border-radius:12px; display:block; touch-action:none; cursor:crosshair; }
+  #svThumb{
+    position:absolute; left:0; top:0; width:18px; height:18px; border-radius:50%;
+    border:3px solid #fff; box-shadow:0 0 0 2px rgba(0,0,0,.4); transform:translate(-9px,-9px);
+    pointer-events:none;
+  }
+  #hueSlider{
+    position:relative; height:20px; border-radius:999px; margin-top:14px;
+    background:linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red);
+    touch-action:none; cursor:pointer;
+  }
+  #hueThumb{
+    position:absolute; left:0; top:-3px; width:26px; height:26px; border-radius:50%;
+    background:#fff; border:3px solid var(--ink); box-shadow:0 2px 0 rgba(0,0,0,.2);
+    transform:translateX(-13px); pointer-events:none;
+  }
 
   /* ---------- overlays ---------- */
   .overlay{
@@ -127,6 +169,7 @@
   <header id="topbar">
     <button class="iconBtn" id="menuBtn" title="Menu">🏠</button>
     <button class="iconBtn" id="clearBtn" title="Clear this page">🧽</button>
+    <button class="iconBtn" id="undoBtn" title="Undo">↩️</button>
     <div id="sceneTitle">Rosie &amp; the Rainbow Unicorn</div>
     <div id="progressDots"></div>
     <button class="iconBtn" id="muteBtn" title="Sound">🔊</button>
@@ -140,6 +183,13 @@
   </main>
 
   <footer id="palette"></footer>
+  <div id="customPopover">
+    <div id="svWrap">
+      <canvas id="svCanvas" width="200" height="120"></canvas>
+      <div id="svThumb"></div>
+    </div>
+    <div id="hueSlider"><div id="hueThumb"></div></div>
+  </div>
 
   <div id="titleScreen" class="overlay">
     <div class="card">
@@ -404,12 +454,179 @@
     b.setAttribute("aria-label", c.name);
     b.addEventListener("click", function(){
       currentColor = c.hex;
+      closeCustomPopover();
       var all = paletteEl.querySelectorAll(".swatch");
       for (var i=0;i<all.length;i++){ all[i].classList.remove("selected"); }
       b.classList.add("selected");
       speak(c.name, 1.05, "audio/color-" + c.name.toLowerCase() + ".mp3");
     });
     paletteEl.appendChild(b);
+  });
+
+  /* ============================================================
+     Custom color swatch -- opens a popover (hue slider + a
+     saturation/value square) that visually expands from the
+     swatch circle itself, instead of a disconnected native
+     color picker dialog.
+  ============================================================ */
+  var customBtn = document.createElement("button");
+  customBtn.className = "swatch customSwatch";
+  customBtn.setAttribute("aria-label", "Custom color");
+  customBtn.setAttribute("title", "Pick any color");
+  var customDot = document.createElement("span");
+  customDot.className = "customDot";
+  customDot.textContent = "🎨";
+  customBtn.appendChild(customDot);
+  paletteEl.appendChild(customBtn);
+
+  var customPopover = document.getElementById("customPopover");
+  var svCanvas = document.getElementById("svCanvas");
+  var svCtx = svCanvas.getContext("2d");
+  var svThumb = document.getElementById("svThumb");
+  var hueSlider = document.getElementById("hueSlider");
+  var hueThumb = document.getElementById("hueThumb");
+
+  var customHex = "#ff5a5a";
+  var pickerHue, pickerSat, pickerVal;
+
+  function hexToHsv(hex){
+    var rgb = hexToRgb(hex);
+    var r=rgb.r/255, g=rgb.g/255, b=rgb.b/255;
+    var max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+    var h=0;
+    if (d !== 0){
+      if (max===r) h = 60*(((g-b)/d) % 6);
+      else if (max===g) h = 60*((b-r)/d + 2);
+      else h = 60*((r-g)/d + 4);
+    }
+    if (h < 0) h += 360;
+    return { h:h, s:max===0?0:d/max, v:max };
+  }
+  (function initPicker(){
+    var hsv = hexToHsv(customHex);
+    pickerHue = hsv.h; pickerSat = hsv.s; pickerVal = hsv.v;
+  })();
+
+  function toHex2(n){ var h = n.toString(16); return h.length===1 ? "0"+h : h; }
+  function sampleSVColor(px, py){
+    var d = svCtx.getImageData(px, py, 1, 1).data;
+    return "#" + toHex2(d[0]) + toHex2(d[1]) + toHex2(d[2]);
+  }
+
+  function drawSVCanvas(){
+    var w = svCanvas.width, h = svCanvas.height;
+    svCtx.fillStyle = "hsl(" + pickerHue + ",100%,50%)";
+    svCtx.fillRect(0, 0, w, h);
+    var whiteGrad = svCtx.createLinearGradient(0, 0, w, 0);
+    whiteGrad.addColorStop(0, "rgba(255,255,255,1)");
+    whiteGrad.addColorStop(1, "rgba(255,255,255,0)");
+    svCtx.fillStyle = whiteGrad;
+    svCtx.fillRect(0, 0, w, h);
+    var blackGrad = svCtx.createLinearGradient(0, 0, 0, h);
+    blackGrad.addColorStop(0, "rgba(0,0,0,0)");
+    blackGrad.addColorStop(1, "rgba(0,0,0,1)");
+    svCtx.fillStyle = blackGrad;
+    svCtx.fillRect(0, 0, w, h);
+  }
+
+  function updateThumbPositions(){
+    svThumb.style.left = (pickerSat * svCanvas.clientWidth) + "px";
+    svThumb.style.top = ((1 - pickerVal) * svCanvas.clientHeight) + "px";
+    hueThumb.style.left = (pickerHue / 360 * hueSlider.clientWidth) + "px";
+  }
+
+  function setCustomColor(hex){
+    currentColor = hex;
+    customHex = hex;
+    customDot.style.background = hex;
+    customDot.textContent = "";
+    var all = paletteEl.querySelectorAll(".swatch");
+    for (var i=0;i<all.length;i++){ all[i].classList.remove("selected"); }
+    customBtn.classList.add("selected");
+  }
+
+  function svPointFromEvent(clientX, clientY){
+    var rect = svCanvas.getBoundingClientRect();
+    var x = clamp(clientX - rect.left, 0, rect.width - 1);
+    var y = clamp(clientY - rect.top, 0, rect.height - 1);
+    pickerSat = x / rect.width;
+    pickerVal = 1 - y / rect.height;
+    var px = Math.floor(x / rect.width * svCanvas.width);
+    var py = Math.floor(y / rect.height * svCanvas.height);
+    updateThumbPositions();
+    setCustomColor(sampleSVColor(px, py));
+  }
+
+  function huePointFromEvent(clientX){
+    var rect = hueSlider.getBoundingClientRect();
+    var x = clamp(clientX - rect.left, 0, rect.width);
+    pickerHue = x / rect.width * 360;
+    drawSVCanvas();
+    updateThumbPositions();
+    var px = Math.floor(pickerSat * (svCanvas.width - 1));
+    var py = Math.floor((1 - pickerVal) * (svCanvas.height - 1));
+    setCustomColor(sampleSVColor(px, py));
+  }
+
+  var svDragging = false, hueDragging = false;
+  svCanvas.addEventListener("pointerdown", function(e){
+    svDragging = true;
+    try{ svCanvas.setPointerCapture(e.pointerId); } catch(err){}
+    svPointFromEvent(e.clientX, e.clientY);
+  });
+  svCanvas.addEventListener("pointermove", function(e){
+    if (svDragging) svPointFromEvent(e.clientX, e.clientY);
+  });
+  svCanvas.addEventListener("pointerup", function(){ svDragging = false; });
+  svCanvas.addEventListener("pointercancel", function(){ svDragging = false; });
+
+  hueSlider.addEventListener("pointerdown", function(e){
+    hueDragging = true;
+    try{ hueSlider.setPointerCapture(e.pointerId); } catch(err){}
+    huePointFromEvent(e.clientX);
+  });
+  hueSlider.addEventListener("pointermove", function(e){
+    if (hueDragging) huePointFromEvent(e.clientX);
+  });
+  hueSlider.addEventListener("pointerup", function(){ hueDragging = false; });
+  hueSlider.addEventListener("pointercancel", function(){ hueDragging = false; });
+
+  function positionPopover(){
+    var btnRect = customBtn.getBoundingClientRect();
+    var popWidth = customPopover.offsetWidth;
+    var centerX = btnRect.left + btnRect.width / 2;
+    var left = clamp(centerX - popWidth / 2, 8, window.innerWidth - popWidth - 8);
+    var bottom = window.innerHeight - btnRect.top + 14;
+    var arrowX = centerX - left;
+    customPopover.style.left = left + "px";
+    customPopover.style.bottom = bottom + "px";
+    customPopover.style.setProperty("--arrowX", arrowX + "px");
+    customPopover.style.transformOrigin = arrowX + "px 100%";
+  }
+
+  function openCustomPopover(){
+    positionPopover();
+    customPopover.classList.add("open");
+    setCustomColor(customHex);
+    drawSVCanvas();
+    updateThumbPositions();
+    speak("Custom Color", 1.05, "audio/color-custom.mp3");
+  }
+  function closeCustomPopover(){
+    customPopover.classList.remove("open");
+  }
+  customBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    if (customPopover.classList.contains("open")) closeCustomPopover();
+    else openCustomPopover();
+  });
+  document.addEventListener("click", function(e){
+    if (customPopover.classList.contains("open") && !customPopover.contains(e.target) && e.target !== customBtn){
+      closeCustomPopover();
+    }
+  });
+  window.addEventListener("resize", function(){
+    if (customPopover.classList.contains("open")) positionPopover();
   });
 
   /* ============================================================
@@ -439,6 +656,7 @@
 
   var imageCache = {};      // scene.key -> processed assets (cached after first visit)
   var currentAssets = null;
+  var undoStack = [];       // per-scene history of {type:"fill",regionId,prevHex} / {type:"clear",prevFills}
 
   function hexToRgb(hex){
     var n = parseInt(hex.replace("#",""), 16);
@@ -549,6 +767,20 @@
     }
   }
 
+  function unpaintRegion(assets, regionId){
+    var data = assets.fillData.data;
+    var labelMap = assets.labelMap;
+    for (var i=0;i<labelMap.length;i++){
+      if (labelMap[i] === regionId){ data[i*4+3] = 0; }
+    }
+  }
+
+  function shallowCopy(o){
+    var r = {};
+    for (var k in o){ if (o.hasOwnProperty(k)) r[k] = o[k]; }
+    return r;
+  }
+
   function redrawCanvas(assets){
     canvas.width = STENCIL_SIZE; canvas.height = STENCIL_SIZE;
     assets.fillCtx.putImageData(assets.fillData, 0, 0);
@@ -563,6 +795,9 @@
     sceneTitleEl.textContent = scene.title;
     updateDots();
     resetView();
+    closeCustomPopover();
+    undoStack = [];
+    updateUndoBtn();
     loadSceneAssets(scene, function(assets){
       currentAssets = assets;
       assets.fillData.data.fill(0);
@@ -577,14 +812,63 @@
 
   function currentScene(){ return SCENES[save.sceneIndex]; }
 
-  function applyColorToRegion(regionId, hex){
+  function applyColorToRegion(regionId, hex, recordUndo){
     var scene = currentScene();
     var assets = currentAssets;
     if (!assets) return;
-    paintRegion(assets, regionId, hex);
-    save.fills[scene.key] = save.fills[scene.key] || {};
-    save.fills[scene.key][String(regionId)] = hex;
+    if (recordUndo !== false){
+      var prevHex = (save.fills[scene.key] || {})[String(regionId)] || null;
+      undoStack.push({ type:"fill", sceneKey:scene.key, regionId:regionId, prevHex:prevHex });
+      if (undoStack.length > 200) undoStack.shift();
+      updateUndoBtn();
+    }
+    if (hex){
+      paintRegion(assets, regionId, hex);
+      save.fills[scene.key] = save.fills[scene.key] || {};
+      save.fills[scene.key][String(regionId)] = hex;
+    } else {
+      unpaintRegion(assets, regionId);
+      if (save.fills[scene.key]) delete save.fills[scene.key][String(regionId)];
+    }
     redrawCanvas(assets);
+  }
+
+  function clearCurrentScene(){
+    var scene = currentScene();
+    var assets = currentAssets;
+    if (!assets) return;
+    undoStack.push({ type:"clear", sceneKey:scene.key, prevFills:shallowCopy(save.fills[scene.key] || {}) });
+    if (undoStack.length > 200) undoStack.shift();
+    assets.fillData.data.fill(0);
+    save.fills[scene.key] = {};
+    redrawCanvas(assets);
+    persist();
+    updateContinuePill();
+    updateUndoBtn();
+  }
+
+  function undoLastFill(){
+    var entry = undoStack.pop();
+    if (!entry || entry.sceneKey !== currentScene().key){ updateUndoBtn(); return; }
+    if (entry.type === "clear"){
+      var assets = currentAssets;
+      assets.fillData.data.fill(0);
+      Object.keys(entry.prevFills).forEach(function(regionId){
+        paintRegion(assets, parseInt(regionId, 10), entry.prevFills[regionId]);
+      });
+      save.fills[entry.sceneKey] = entry.prevFills;
+      redrawCanvas(assets);
+    } else {
+      applyColorToRegion(entry.regionId, entry.prevHex, false);
+    }
+    persist();
+    updateContinuePill();
+    updateUndoBtn();
+  }
+
+  function updateUndoBtn(){
+    var btn = document.getElementById("undoBtn");
+    if (btn) btn.disabled = undoStack.length === 0;
   }
 
   function progressCount(){
@@ -620,7 +904,7 @@
      rect via getBoundingClientRect(), so tap-to-color keeps working
      unchanged at any zoom level -- no coordinate math to duplicate.
   ============================================================ */
-  var MIN_ZOOM = 1, MAX_ZOOM = 4;
+  var MIN_ZOOM = 1, MAX_ZOOM = 8;
   var viewScale = 1, viewX = 0, viewY = 0;
   var baseRect = null; // canvas's laid-out rect with the transform cleared
 
@@ -759,6 +1043,7 @@
     if (suppressNextClick){ suppressNextClick = false; return; }
     var regionId = regionAtPoint(e.clientX, e.clientY);
     if (regionId < 0) return;
+    closeCustomPopover();
     applyColorToRegion(regionId, currentColor);
     persist();
     tapSound();
@@ -822,6 +1107,7 @@
      Title / menu / end screens
   ============================================================ */
   function goToTitle(){
+    closeCustomPopover();
     titleScreen.classList.remove("hidden");
     storyPanel.classList.add("hidden");
     endScreen.classList.add("hidden");
@@ -849,10 +1135,10 @@
     startGame(0);
   });
   document.getElementById("clearBtn").addEventListener("click", function(){
-    var scene = currentScene();
-    save.fills[scene.key] = {};
-    persist();
-    renderScene(save.sceneIndex);
+    clearCurrentScene();
+  });
+  document.getElementById("undoBtn").addEventListener("click", function(){
+    undoLastFill();
   });
   document.getElementById("muteBtn").addEventListener("click", function(e){
     muted = !muted;
